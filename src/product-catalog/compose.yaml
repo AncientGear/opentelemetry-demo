@@ -1,0 +1,79 @@
+
+x-default-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "5m"
+    max-file: "2"
+services:
+  astronomy-db:
+    image: ${POSTGRES_IMAGE}
+    container_name: astronomy-db
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+    restart: unless-stopped
+    ports:
+      - ${POSTGRES_PORT}
+    command: postgres -c shared_preload_libraries=pg_stat_statements
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost -p ${POSTGRES_PORT}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      - POSTGRES_PASSWORD
+    volumes:
+      - ../postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    logging: *logging
+
+  # Product Catalog service
+  product-catalog:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}
+    container_name: product-catalog
+    build:
+      context: ./
+      dockerfile: ${PRODUCT_CATALOG_DOCKERFILE}
+      cache_from:
+        - ${IMAGE_NAME}:${IMAGE_VERSION}-product-catalog
+    deploy:
+      resources:
+        limits:
+          memory: 20M
+    restart: unless-stopped
+    ports:
+      - "${PRODUCT_CATALOG_PORT}"
+    environment:
+      - PRODUCT_CATALOG_PORT
+      - FLAGD_HOST
+      - FLAGD_PORT
+      - GOMEMLIMIT=16MiB
+      - DB_CONNECTION_STRING=postgres://astronomy_user:${POSTGRES_ASTRONOMY_PASSWORD}@${POSTGRES_HOST}/astronomy_db?sslmode=disable
+    depends_on:
+      flagd:
+        condition: service_started
+      astronomy-db:
+        condition: service_started
+    logging: *logging
+  flagd:
+    image: ${FLAGD_IMAGE}
+    container_name: flagd
+    deploy:
+      resources:
+        limits:
+          memory: 75M
+    restart: unless-stopped
+    environment:
+      - GOMEMLIMIT=60MiB
+    command: [
+      "start",
+      "--uri",
+      "file:./etc/flagd/demo.flagd.json"
+    ]
+    ports:
+      - "${FLAGD_PORT}"
+      - "${FLAGD_OFREP_PORT}"
+    volumes:
+      - ../flagd:/etc/flagd
+    logging: *logging
+
